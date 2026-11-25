@@ -48,6 +48,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [recorder] _ in
                 MainActor.assumeIsolated { recorder.refreshPermissions() }
             },
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { notification in
+                guard let window = notification.object as? NSWindow else { return }
+                MainActor.assumeIsolated {
+                    guard window.canBecomeMain else { return }
+                    // Check after AppKit has removed the closing window from view.
+                    DispatchQueue.main.async {
+                        let hasOpenWindow = NSApp.windows.contains {
+                            $0.canBecomeMain && ($0.isVisible || $0.isMiniaturized)
+                        }
+                        if !hasOpenWindow { NSApp.setActivationPolicy(.accessory) }
+                    }
+                }
+            },
         ]
     }
 
@@ -74,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if recorder.isActive {
+            NSApp.setActivationPolicy(.regular)
             NSApp.activate()
             if !recordingWindow.isVisible { recordingWindow.center() }
             recordingWindow.makeKeyAndOrderFront(nil)
@@ -87,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // SwiftUI rejects showSettingsWindow: sent from code ("use SettingsLink") but honours its own app-menu item.
 @MainActor
 func showSettingsWindow() {
+    NSApp.setActivationPolicy(.regular)
     guard let menu = NSApp.mainMenu?.items.first?.submenu,
           let index = menu.items.firstIndex(where: { $0.keyEquivalent == "," })
     else { return }
