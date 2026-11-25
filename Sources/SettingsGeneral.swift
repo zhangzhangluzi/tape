@@ -33,9 +33,7 @@ struct GeneralSettings: View {
                         Button("打开隐私设置…") { NSWorkspace.shared.open(pane.url) }
                     }
                 }
-                if recorder.phase == .idle, let recording = recorder.lastRecording {
-                    Button("打开最近录音") { NSWorkspace.shared.open(recording) }
-                }
+                Button("打开录音文件夹", action: openSaveFolder)
             }
 
             Section {
@@ -142,6 +140,16 @@ struct GeneralSettings: View {
         Task {
             if recorder.isRecording { await recorder.stop() }
             else { await recorder.start() }
+        }
+    }
+
+    private func openSaveFolder() {
+        let folder = settings.saveFolder
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            folderError = NSWorkspace.shared.open(folder) ? nil : "无法在访达中打开“\(folder.lastPathComponent)”。"
+        } catch {
+            folderError = "无法访问录音文件夹“\(folder.lastPathComponent)”。"
         }
     }
 
