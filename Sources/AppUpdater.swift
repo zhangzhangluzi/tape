@@ -40,7 +40,7 @@ final class AppUpdater {
         #if DEBUG
         false
         #else
-        Bundle.main.bundleURL.pathExtension == "app"
+        Bundle.main.bundleIdentifier == "dev.gustaf.tape" && Bundle.main.bundleURL.pathExtension == "app"
         #endif
     }
 

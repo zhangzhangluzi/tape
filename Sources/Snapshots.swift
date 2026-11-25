@@ -10,7 +10,7 @@ enum SettingsSnapshot {
     static func capture(to output: URL, updater: AppUpdater) async {
         SnapshotCapture.prepare()
         let base = output.deletingPathExtension().path
-        let general = GeneralSettings(settings: .shared).environment(updater).frame(width: 480)
+        let general = GeneralSettings(settings: .shared, recorder: Recorder(settings: .shared)).frame(width: 480)
         guard await SnapshotCapture.write(general, title: "General", to: URL(filePath: "\(base)-general.png")),
               await SnapshotCapture.write(AboutSettings().frame(width: 480), title: "About", to: URL(filePath: "\(base)-about.png"))
         else { fail(#line) }

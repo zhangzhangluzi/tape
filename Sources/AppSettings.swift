@@ -14,7 +14,7 @@ final class AppSettings {
         return AppSettings(store: .standard)
     }()
 
-    static let defaultFolder = URL.moviesDirectory.appending(path: "Tape", directoryHint: .isDirectory)
+    static let defaultFolder = URL.moviesDirectory.appending(path: "Tape 中文版", directoryHint: .isDirectory)
 
     @ObservationIgnored let store: UserDefaults
 

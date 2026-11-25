@@ -8,12 +8,12 @@ struct RecordingView: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text(recorder.isSavingToFallback ? "Recording audio to Movies › Tape" : "Recording audio")
+            Text(recorder.isSavingToFallback ? "正在录音，保存到默认文件夹" : "正在录音")
                 .foregroundStyle(.secondary)
             Text(ElapsedTime.clock(recorder.elapsed))
                 .font(.system(size: 32, weight: .medium).monospacedDigit())
-                .accessibilityLabel("Elapsed \(ElapsedTime.spoken(recorder.elapsed))")
-            Button("Stop Recording") { Task { await recorder.stop() } }
+                .accessibilityLabel("已录制 \(ElapsedTime.spoken(recorder.elapsed))")
+            Button("停止录音") { Task { await recorder.stop() } }
                 .keyboardShortcut(.defaultAction)
                 .controlSize(.large)
                 .disabled(!recorder.isRecording)

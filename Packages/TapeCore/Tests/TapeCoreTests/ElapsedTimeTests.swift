@@ -7,7 +7,7 @@ struct ElapsedTimeTests {
         #expect(ElapsedTime.clock(seconds) == expected)
     }
 
-    @Test(arguments: [(0, "under a minute"), (59, "under a minute"), (60, "1 minute"), (754, "12 minutes")])
+    @Test(arguments: [(0, "不到一分钟"), (59, "不到一分钟"), (60, "1 分钟"), (754, "12 分钟")])
     func spoken(seconds: Int, expected: String) {
         #expect(ElapsedTime.spoken(seconds) == expected)
     }

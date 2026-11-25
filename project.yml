@@ -36,20 +36,20 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Tape
-        PRODUCT_BUNDLE_IDENTIFIER: dev.gustaf.tape
+        PRODUCT_BUNDLE_IDENTIFIER: local.codex.tape-zh-cn
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
         COMBINE_HIDPI_IMAGES: YES
     info:
       path: Resources/Info.plist
       properties:
-        CFBundleDisplayName: Tape
+        CFBundleDisplayName: Tape 中文版
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "26.0"
         LSUIElement: true
         NSHumanReadableCopyright: "Tape"
         # Written here rather than as INFOPLIST_KEY_*: NSAudioCaptureUsageDescription is reported to be dropped that way.
-        NSMicrophoneUsageDescription: "Tape records your voice alongside the call."
-        NSAudioCaptureUsageDescription: "Tape records what other people say in your calls."
+        NSMicrophoneUsageDescription: "Tape 中文版需要麦克风权限，才能把你说话的声音录进本机文件。"
+        NSAudioCaptureUsageDescription: "Tape 中文版需要系统录音权限，才能把 Mac 播放的声音录进本机文件。"
     scheme: {}

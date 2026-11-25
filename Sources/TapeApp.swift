@@ -7,8 +7,7 @@ struct TapeApp: App {
 
     var body: some Scene {
         Settings {
-            SettingsView(settings: .shared)
-                .environment(appDelegate.updater)
+            SettingsView(settings: .shared, recorder: appDelegate.recorder)
         }
     }
 }
@@ -35,10 +34,10 @@ func menuBarImage(phase: Recorder.Phase, elapsed: Int) -> NSImage {
     }
     image.isTemplate = true
     image.accessibilityDescription = switch phase {
-    case .idle: "Tape"
-    case .starting: "Tape, starting"
-    case .recording: "Tape, recording, \(ElapsedTime.spoken(elapsed))"
-    case .stopping: "Tape, saving"
+    case .idle: "Tape 中文版"
+    case .starting: "Tape 正在准备录音"
+    case .recording: "Tape 正在录音，\(ElapsedTime.spoken(elapsed))"
+    case .stopping: "Tape 正在保存录音"
     }
     return image
 }

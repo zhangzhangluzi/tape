@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Tape</string>
+	<string>Tape 中文版</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,10 +25,10 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Tape records what other people say in your calls.</string>
+	<string>Tape 中文版需要系统录音权限，才能把 Mac 播放的声音录进本机文件。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Tape</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Tape records your voice alongside the call.</string>
+	<string>Tape 中文版需要麦克风权限，才能把你说话的声音录进本机文件。</string>
 </dict>
 </plist>

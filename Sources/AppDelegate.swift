@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var recordingWindow: NSWindow = {
         let window = NSWindow(contentViewController: NSHostingController(rootView: RecordingView(recorder: recorder)))
         window.styleMask = [.titled, .closable]
-        window.title = "Tape"
+        window.title = "Tape 中文版"
         window.identifier = RecordingView.windowID
         window.isReleasedWhenClosed = false
         return window
@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updater.isInstallBlocked = { [recorder] in recorder.isActive }
         updater.start()
         Task { await recorder.recoverInterruptedRecording() }
+        DispatchQueue.main.async { showSettingsWindow() }
         let workspace = NSWorkspace.shared.notificationCenter
         observers = [
             workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [recorder] _ in

@@ -6,14 +6,15 @@ enum SettingsTab: String {
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
+    let recorder: Recorder
     @AppStorage("settingsTab") private var tab = SettingsTab.general
 
     var body: some View {
         TabView(selection: $tab) {
-            Tab("General", systemImage: "gearshape", value: .general) {
-                GeneralSettings(settings: settings)
+            Tab("通用", systemImage: "gearshape", value: .general) {
+                GeneralSettings(settings: settings, recorder: recorder)
             }
-            Tab("About", systemImage: "info.circle", value: .about) {
+            Tab("关于", systemImage: "info.circle", value: .about) {
                 AboutSettings()
             }
         }

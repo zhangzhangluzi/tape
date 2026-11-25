@@ -1,25 +1,53 @@
 import ServiceManagement
 import SwiftUI
+import TapeCore
 
 struct GeneralSettings: View {
     @Bindable var settings: AppSettings
-    @Environment(AppUpdater.self) private var updater
+    let recorder: Recorder
     @State private var loginStatus = SMAppService.mainApp.status
     @State private var loginError: String?
     @State private var folderError: String?
 
     var body: some View {
         Form {
+            Section("录音") {
+                HStack {
+                    Button(recorder.actionTitle, action: toggleRecording)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(recorder.phase != .idle && !recorder.isRecording)
+                    if recorder.startedAt != nil {
+                        Text(ElapsedTime.clock(recorder.elapsed)).monospacedDigit()
+                    }
+                    Spacer()
+                }
+                if recorder.startedAt != nil || recorder.systemSignalDetected || recorder.microphoneSignalDetected {
+                    LabeledContent("系统声音", value: recorder.systemSignalDetected ? "本次已检测到" : "等待声音")
+                    LabeledContent("麦克风声音", value: microphoneStatus)
+                }
+                if let notice = recorder.notice {
+                    Text(notice.text)
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                    if let pane = notice.privacyPane {
+                        Button("打开隐私设置…") { NSWorkspace.shared.open(pane.url) }
+                    }
+                }
+                if recorder.phase == .idle, let recording = recorder.lastRecording {
+                    Button("打开最近录音") { NSWorkspace.shared.open(recording) }
+                }
+            }
+
             Section {
-                LabeledContent("Save to") {
+                LabeledContent("保存到") {
                     Menu {
-                        Button("Choose…", action: chooseFolder)
-                        Button("Show in Finder") {
+                        Button("选取文件夹…", action: chooseFolder)
+                        Button("在访达中显示") {
                             NSWorkspace.shared.activateFileViewerSelecting([settings.saveFolder])
                         }
                         if settings.customFolder != nil {
                             Divider()
-                            Button("Use Tape (Movies)") {
+                            Button("使用默认文件夹") {
                                 settings.customFolder = nil
                                 folderError = nil
                             }
@@ -35,33 +63,33 @@ struct GeneralSettings: View {
                         .foregroundStyle(.red)
                 }
             } header: {
-                Text("Recordings")
+                Text("录音文件")
             } footer: {
-                Text("Applies from the next recording.")
+                Text("从下一次录音起生效。")
             }
 
             Section {
                 Toggle(isOn: $settings.reducesEcho) {
-                    Text("Reduce Echo")
-                    Text("Removes other people’s voices from your microphone when you’re on speakers. Experimental.")
+                    Text("减少回声")
+                    Text("使用扬声器时减少被麦克风收进去的对方声音。实验功能。")
                 }
             } header: {
-                Text("Microphone")
+                Text("麦克风")
             } footer: {
-                Text("Applies from the next recording.")
+                Text("从下一次录音起生效。")
             }
 
             Section {
-                Toggle("Launch at login", isOn: Binding(
+                Toggle("登录时自动启动", isOn: Binding(
                     get: { loginStatus == .enabled || loginStatus == .requiresApproval },
                     set: setLaunchAtLogin
                 ))
                 if loginStatus == .requiresApproval {
                     LabeledContent {
-                        Button("Open Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+                        Button("打开登录项设置…") { SMAppService.openSystemSettingsLoginItems() }
                     } label: {
-                        Text("Approval needed")
-                        Text("Allow Tape in System Settings to finish turning this on.")
+                        Text("需要确认")
+                        Text("请在系统设置中允许 Tape 中文版随登录启动。")
                     }
                 }
                 if let loginError {
@@ -71,45 +99,28 @@ struct GeneralSettings: View {
                 }
             }
 
-            Section("Updates") {
-                LabeledContent("Version", value: AppUpdater.currentVersion)
-                HStack(spacing: 8) {
-                    updateStatus
-                    Spacer()
-                    if updater.isBusy {
-                        ProgressView()
-                            .controlSize(.small)
-                            .accessibilityLabel(updater.status == .checking ? "Checking" : "Downloading")
-                    }
-                    if let staged = updater.staged {
-                        Button("Install Tape \(staged.version) and Relaunch", action: updater.installAndRelaunch)
-                    } else {
-                        Button("Check for Updates") { updater.check(.manual) }
-                            .disabled(updater.isBusy)
-                    }
-                }
+            Section("版本") {
+                LabeledContent("Tape 中文版", value: AppUpdater.currentVersion)
             }
         }
         .formStyle(.grouped)
-        .frame(height: 496)
+        .frame(height: 560)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             loginStatus = SMAppService.mainApp.status
         }
     }
 
-    @ViewBuilder private var updateStatus: some View {
-        if updater.status == .checking {
-            Text("Checking for updates…").font(.callout).foregroundStyle(.secondary)
-        } else if updater.status == .downloading {
-            Text("Downloading the update…").font(.callout).foregroundStyle(.secondary)
-        } else if case .upToDate(let version) = updater.status {
-            Text("Tape \(version) is the latest version.").font(.callout).foregroundStyle(.secondary)
-        } else if case .ready(let version) = updater.status {
-            Text("Tape \(version) is ready to install.").font(.callout)
-        } else if case .blocked(let message) = updater.status {
-            Text(message).font(.callout).foregroundStyle(.orange)
-        } else if case .failed(let message) = updater.status {
-            Text(message).font(.callout).foregroundStyle(.red)
+    private var microphoneStatus: String {
+        if recorder.startedAt != nil, recorder.microphoneName == nil { return "当前不可用" }
+        let status = recorder.microphoneSignalDetected ? "本次已检测到" : "等待声音"
+        if let name = recorder.microphoneName { return "\(status) · \(name)" }
+        return status
+    }
+
+    private func toggleRecording() {
+        Task {
+            if recorder.isRecording { await recorder.stop() }
+            else { await recorder.start() }
         }
     }
 
@@ -119,11 +130,11 @@ struct GeneralSettings: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.directoryURL = settings.saveFolder
-        panel.prompt = "Choose"
+        panel.prompt = "选取"
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         let probe = folder.appending(path: ".tape-write-test-\(UUID().uuidString)")
         guard (try? Data().write(to: probe)) != nil else {
-            folderError = "Tape can’t save to “\(folder.lastPathComponent)”. Choose another folder."
+            folderError = "无法写入“\(folder.lastPathComponent)”。请选择其他文件夹。"
             return
         }
         try? FileManager.default.removeItem(at: probe)
@@ -136,7 +147,7 @@ struct GeneralSettings: View {
             if isOn { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
             loginError = nil
         } catch {
-            loginError = "Couldn’t change Launch at login: \(error.localizedDescription)"
+            loginError = "无法更改登录时自动启动。\(error.localizedDescription)"
         }
         loginStatus = SMAppService.mainApp.status
     }

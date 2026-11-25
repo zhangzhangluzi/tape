@@ -96,22 +96,22 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             let item = viewItem(NSHostingView(rootView: NoticeRow(notice: notice)))
             items.append(item)
             if let pane = notice.privacyPane {
-                items.append(actionItem("Open Privacy Settings…", #selector(openPrivacySettings), value: pane.url))
+                items.append(actionItem("打开隐私设置…", #selector(openPrivacySettings), value: pane.url))
             }
         }
-        items += [.separator(), reduceEchoItem(), .separator(), .sectionHeader(title: "Recent")]
+        items += [.separator(), reduceEchoItem(), .separator(), .sectionHeader(title: "最近录音")]
         if let recordings = recent.items {
-            items += recordings.isEmpty ? [disabledItem("No recordings yet.")] : recordings.map(recentItem)
+            items += recordings.isEmpty ? [disabledItem("暂无录音")] : recordings.map(recentItem)
         }
-        items += [actionItem("Show All Recordings…", #selector(openRecordingsFolder)), .separator()]
+        items += [actionItem("显示全部录音…", #selector(openRecordingsFolder)), .separator()]
         if let staged = updater.staged {
-            let install = actionItem(isActive ? "Tape \(staged.version) installs after recording" : "Install Tape \(staged.version) and Relaunch", #selector(installUpdate))
+            let install = actionItem(isActive ? "录音结束后安装 Tape \(staged.version)" : "安装 Tape \(staged.version) 并重新打开", #selector(installUpdate))
             install.isEnabled = !isActive
             items.append(install)
         }
         items += [
-            actionItem("Tape Settings…", #selector(openSettings), key: ","),
-            actionItem(isActive ? "Stop and Quit Tape" : "Quit Tape", #selector(NSApplication.terminate(_:)), key: "q", target: NSApp),
+            actionItem("Tape 设置…", #selector(openSettings), key: ","),
+            actionItem(isActive ? "停止录音并退出" : "退出 Tape", #selector(NSApplication.terminate(_:)), key: "q", target: NSApp),
         ]
         menu.items = items
     }
@@ -119,7 +119,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private func recordItem() -> NSMenuItem {
         let item = viewItem(MenuRowHostingView(rootView: RecordRow(recorder: recorder, microphone: microphone, highlight: highlight)))
         item.identifier = Self.recordItem
-        item.title = recorder.startedAt == nil ? "Record Audio" : "Stop Recording"
+        item.title = recorder.actionTitle
         item.target = self
         item.action = #selector(toggleRecording)
         item.isEnabled = recorder.startedAt == nil ? recorder.phase == .idle : recorder.isRecording
@@ -129,7 +129,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
     private func reduceEchoItem() -> NSMenuItem {
         let item = viewItem(MenuRowHostingView(rootView: ReduceEchoRow(settings: settings, recorder: recorder, highlight: highlight)))
         item.identifier = Self.reduceEchoItem
-        item.title = "Reduce Echo"
+        item.title = "减少回声"
         item.target = self
         item.action = #selector(toggleReduceEcho)
         item.isEnabled = recorder.phase == .idle

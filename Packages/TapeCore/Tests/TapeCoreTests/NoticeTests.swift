@@ -10,8 +10,8 @@ struct NoticeTests {
     }
 
     @Test func stopReasonsNameTheVolume() {
-        #expect(Notice.stopped(.diskFull(volume: "Macintosh HD")).text == "Recording stopped: “Macintosh HD” is full.")
-        #expect(Notice.recovered(name: "Tape 2026-10-26 at 14.03.05").text == "Recovered “Tape 2026-10-26 at 14.03.05”.")
+        #expect(Notice.stopped(.diskFull(volume: "Macintosh HD")).text == "“Macintosh HD”空间已满，录音已停止。")
+        #expect(Notice.recovered(name: "Tape 2026-10-26 at 14.03.05").text == "已找回录音“Tape 2026-10-26 at 14.03.05”。")
     }
 
     @Test func privacyPaneURLs() {

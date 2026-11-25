@@ -6,3 +6,5 @@ DerivedData/
 .DS_Store
 .swiftpm/
 .build-debug/
+.build-tests/
+test-recordings/

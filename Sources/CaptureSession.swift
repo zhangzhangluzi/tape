@@ -30,6 +30,7 @@ final class CaptureSession: @unchecked Sendable {
     private let ring = AudioRing(slots: 256, framesPerSlot: 2 * 8192)
     private let deviceRate = Atomic<UInt64>(0)
     private let heardSystemAudio = Atomic<Bool>(false)
+    private let heardMicrophone = Atomic<Bool>(false)
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let outputFormat: AVAudioFormat
@@ -55,6 +56,9 @@ final class CaptureSession: @unchecked Sendable {
     private var drainTimer: DispatchSourceTimer?
     private let silence = [Float](repeating: 0, count: 4096)
 
+    var systemSignalDetected: Bool { heardSystemAudio.load(ordering: .relaxed) }
+    var microphoneSignalDetected: Bool { heardMicrophone.load(ordering: .relaxed) }
+
     init(url: URL, probesTap: Bool, makeEchoCanceller: (@Sendable (Double) -> EchoCanceller)?, onEvent: @escaping @Sendable (CaptureEvent) -> Void) throws {
         writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
         writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
@@ -68,7 +72,7 @@ final class CaptureSession: @unchecked Sendable {
         input.expectsMediaDataInRealTime = true
         writer.add(input)
         guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Self.outputRate, channels: 1, interleaved: false) else {
-            throw CaptureError("Couldn’t describe the output format.")
+            throw CaptureError("无法设置录音输出格式。")
         }
         self.outputFormat = outputFormat
         resampler = Resampler(outputFormat: outputFormat)
@@ -81,7 +85,7 @@ final class CaptureSession: @unchecked Sendable {
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
             controlQueue.async { [self] in
                 do {
-                    guard writer.startWriting() else { throw writer.error ?? CaptureError("Couldn’t create the file.") }
+                    guard writer.startWriting() else { throw writer.error ?? CaptureError("无法创建录音文件。") }
                     writer.startSession(atSourceTime: .zero)
                     processingQueue.sync { startDraining() }
                     tap = try Self.makeTap()
@@ -134,11 +138,11 @@ final class CaptureSession: @unchecked Sendable {
     // MARK: Devices (controlQueue)
 
     private func startAggregate(includeMicrophone: Bool) throws {
-        guard let tap else { throw CaptureError("System audio isn’t tapped.") }
+        guard let tap else { throw CaptureError("系统声音采集尚未初始化。") }
         let micID = includeMicrophone ? Self.defaultDevice(kAudioHardwarePropertyDefaultInputDevice) : nil
         guard let clockID = micID ?? Self.defaultDevice(kAudioHardwarePropertyDefaultOutputDevice),
               let clockUID = Self.string(of: clockID, kAudioDevicePropertyDeviceUID)
-        else { throw CaptureError("No audio device is available.") }
+        else { throw CaptureError("没有可用的音频设备。") }
         let composition: [String: Any] = [
             kAudioAggregateDeviceNameKey: "Tape",
             kAudioAggregateDeviceUIDKey: "dev.gustaf.tape.aggregate.\(UUID().uuidString)",
@@ -152,16 +156,16 @@ final class CaptureSession: @unchecked Sendable {
         ]
         var aggregate = AudioObjectID(kAudioObjectUnknown)
         let created = AudioHardwareCreateAggregateDevice(composition as CFDictionary, &aggregate)
-        guard created == noErr else { throw CaptureError("Couldn’t create the capture device.", status: created) }
+        guard created == noErr else { throw CaptureError("无法创建双路音频设备。", status: created) }
         aggregateID = aggregate
 
-        guard let rate = Self.sampleRate(of: aggregate) else { throw CaptureError("The capture device has no sample rate.") }
+        guard let rate = Self.sampleRate(of: aggregate) else { throw CaptureError("无法读取音频设备的采样率。") }
         deviceRate.store(rate.bitPattern, ordering: .relaxed)
 
         // Sub-device streams come first in the aggregate (FullSubDeviceList order), then the tap's.
         let tapIndex = Self.inputStreamCount(of: clockID)
         let streamCount = Self.inputStreamCount(of: aggregate)
-        guard streamCount > tapIndex else { throw CaptureError("The capture device has no system audio stream.") }
+        guard streamCount > tapIndex else { throw CaptureError("当前音频设备未提供系统声音。") }
 
         for object in [aggregate, clockID] {
             let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.sampleRateChanged(on: object) }
@@ -174,10 +178,10 @@ final class CaptureSession: @unchecked Sendable {
         let createdProc = AudioDeviceCreateIOProcIDWithBlock(&proc, aggregate, nil) { [self] _, inputData, inputTime, _, _ in
             capture(inputData, at: inputTime.pointee, tapIndex: tapIndex)
         }
-        guard createdProc == noErr, let proc else { throw CaptureError("Couldn’t read the capture device.", status: createdProc) }
+        guard createdProc == noErr, let proc else { throw CaptureError("无法读取录音设备。", status: createdProc) }
         procID = proc
         let started = AudioDeviceStart(aggregate, proc)
-        guard started == noErr else { throw CaptureError("Couldn’t start the capture device.", status: started) }
+        guard started == noErr else { throw CaptureError("无法启动录音设备。", status: started) }
         onEvent(.microphone(micID.flatMap { Self.string(of: $0, kAudioObjectPropertyName) }))
     }
 
@@ -299,6 +303,10 @@ final class CaptureSession: @unchecked Sendable {
     private func consume(_ chunk: AudioRingChunk, _ samples: UnsafeBufferPointer<Float>) {
         guard chunk.sampleRate > 0 else { return }
         let frames = samples.count / 2
+        let microphone = samples[frames...]
+        if !microphoneSignalDetected, microphone.contains(where: { abs($0) > 0.005 }) {
+            heardMicrophone.store(true, ordering: .relaxed)
+        }
         var gap = expectedHostSeconds.map { SilenceGap.frames(expectedSeconds: $0, actualSeconds: chunk.hostSeconds, sampleRate: chunk.sampleRate) } ?? 0
         while gap > 0 {
             let zeros = silence.prefix(gap)
@@ -306,7 +314,7 @@ final class CaptureSession: @unchecked Sendable {
             gap -= zeros.count
         }
         expectedHostSeconds = chunk.hostSeconds + Double(frames) / chunk.sampleRate
-        mix(system: samples[0..<frames], microphone: samples[frames...], rate: chunk.sampleRate)
+        mix(system: samples[0..<frames], microphone: microphone, rate: chunk.sampleRate)
     }
 
     private func mix<Plane: AccelerateBuffer & Sequence<Float>>(system: Plane, microphone: Plane, rate: Double) {
@@ -360,7 +368,7 @@ final class CaptureSession: @unchecked Sendable {
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         var address = address(kAudioHardwarePropertyTranslatePIDToProcessObject)
         let translated = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, UInt32(MemoryLayout<pid_t>.size), &pid, &size, &processObject)
-        guard translated == noErr else { throw CaptureError("Couldn’t find Tape’s audio process.", status: translated) }
+        guard translated == noErr else { throw CaptureError("无法找到 Tape 的音频进程。", status: translated) }
         let description = CATapDescription(monoGlobalTapButExcludeProcesses: [processObject])
         description.name = "Tape"
         description.uuid = UUID()
@@ -368,7 +376,7 @@ final class CaptureSession: @unchecked Sendable {
         description.muteBehavior = .unmuted
         var tapID = AudioObjectID(kAudioObjectUnknown)
         let created = AudioHardwareCreateProcessTap(description, &tapID)
-        guard created == noErr else { throw CaptureError("Couldn’t tap system audio.", status: created) }
+        guard created == noErr else { throw CaptureError("无法开始采集系统声音。", status: created) }
         return (tapID, description)
     }
 

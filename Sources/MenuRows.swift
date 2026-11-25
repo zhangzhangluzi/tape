@@ -12,7 +12,7 @@ struct RecordRow: View {
                 MenuBadge(symbol: recorder.startedAt == nil ? "circle.fill" : "stop.fill")
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
-                        Text(title)
+                        Text(recorder.actionTitle)
                         Spacer(minLength: 8)
                         if recorder.startedAt != nil {
                             Text(ElapsedTime.clock(recorder.elapsed))
@@ -21,11 +21,11 @@ struct RecordRow: View {
                         }
                     }
                     if let since = recorder.startedAt {
-                        Text("\(recorder.microphoneName ?? "Microphone unavailable") · since \(since.formatted(date: .omitted, time: .shortened))\(recorder.isSavingToFallback ? " · saving to Movies › Tape" : "")")
+                        Text("\(recorder.microphoneName ?? "麦克风不可用") · 开始于 \(since.formatted(date: .omitted, time: .shortened))\(recorder.isSavingToFallback ? " · 保存到默认文件夹" : "")")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     } else {
-                        Text(microphone.name ?? "No microphone")
+                        Text(microphone.name ?? "未找到麦克风")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -39,10 +39,6 @@ struct RecordRow: View {
         recorder.startedAt == nil ? recorder.phase == .idle : recorder.isRecording
     }
 
-    private var title: String {
-        if recorder.startedAt != nil { return recorder.isRecording ? "Stop Recording" : "Saving…" }
-        return recorder.phase == .starting ? "Starting…" : "Record Audio"
-    }
 }
 
 struct ReduceEchoRow: View {
@@ -54,15 +50,15 @@ struct ReduceEchoRow: View {
         MenuRow(isHighlighted: highlight.item == StatusMenu.reduceEchoItem) {
             HStack {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Reduce Echo")
+                    Text("减少回声")
                     if recorder.phase != .idle {
-                        Text("Applies from the next recording.")
+                        Text("从下一次录音起生效。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 8)
-                MenuSwitch(title: "Reduce Echo", isOn: settings.reducesEcho, isHighlighted: highlight.item == StatusMenu.reduceEchoItem)
+                MenuSwitch(title: "减少回声", isOn: settings.reducesEcho, isHighlighted: highlight.item == StatusMenu.reduceEchoItem)
                     .disabled(recorder.phase != .idle)
             }
         }

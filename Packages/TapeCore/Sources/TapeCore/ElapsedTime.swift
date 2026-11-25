@@ -8,7 +8,7 @@ public enum ElapsedTime {
 
     public static func spoken(_ seconds: Int) -> String {
         let minutes = seconds / 60
-        if minutes == 0 { return "under a minute" }
-        return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+        if minutes == 0 { return "不到一分钟" }
+        return "\(minutes) 分钟"
     }
 }

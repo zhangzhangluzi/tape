@@ -20,6 +20,8 @@ final class Recorder {
     private(set) var elapsed = 0
     private(set) var notice: Notice?
     private(set) var microphoneName: String?
+    private(set) var systemSignalDetected = false
+    private(set) var microphoneSignalDetected = false
     private(set) var isSavingToFallback = false
     private(set) var lastRecording: URL? {
         didSet { settings.store.set(lastRecording?.path, forKey: "lastRecording") }
@@ -46,6 +48,15 @@ final class Recorder {
         return false
     }
 
+    var actionTitle: String {
+        switch phase {
+        case .idle: "开始录音"
+        case .starting: "正在准备…"
+        case .recording: "停止录音"
+        case .stopping: "正在保存…"
+        }
+    }
+
     var startedAt: Date? {
         if case .recording(let since) = phase { return since }
         if case .stopping(let since) = phase { return since }
@@ -66,6 +77,8 @@ final class Recorder {
             return
         }
         phase = .starting
+        systemSignalDetected = false
+        microphoneSignalDetected = false
         if microphoneAccess == .notDetermined, !(await AVCaptureDevice.requestAccess(for: .audio)) {
             notice = .microphoneDenied
             phase = .idle
@@ -82,15 +95,21 @@ final class Recorder {
         settings.store.set(["path": url.path, "pid": Int(getpid())], forKey: "inProgressRecording")
         let id = UUID()
         sessionID = id
-        let session = try? CaptureSession(url: url, probesTap: settings.store.bool(forKey: "systemAudioConfirmed"), makeEchoCanceller: settings.reducesEcho ? EchoCanceller.init : nil) { [weak self] event in
-            Task { @MainActor in self?.handle(event, from: id) }
-        }
-        guard let session, (try? await session.start()) != nil else {
+        let session: CaptureSession
+        var pendingSession: CaptureSession?
+        do {
+            let candidate = try CaptureSession(url: url, probesTap: settings.store.bool(forKey: "systemAudioConfirmed"), makeEchoCanceller: settings.reducesEcho ? EchoCanceller.init : nil) { [weak self] event in
+                Task { @MainActor in self?.handle(event, from: id) }
+            }
+            pendingSession = candidate
+            try await candidate.start()
+            session = candidate
+        } catch {
             sessionID = nil
-            _ = await session?.finish()
+            _ = await pendingSession?.finish()
             try? FileManager.default.removeItem(at: url)
             settings.store.removeObject(forKey: "inProgressRecording")
-            notice = .stopped(.audioFailed)
+            notice = .couldNotStart(message: error.localizedDescription)
             phase = .idle
             return
         }
@@ -102,14 +121,14 @@ final class Recorder {
         elapsed = 0
         let since = Date.now
         phase = .recording(since: since)
-        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Recording a call")
+        activity = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "正在录音")
         lastDiskCheck = .now
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick(since: since) }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
-        AccessibilityNotification.Announcement("Recording started").post()
+        AccessibilityNotification.Announcement("已开始录音").post()
     }
 
     func stop(reason: StopReason? = nil) async {
@@ -117,6 +136,8 @@ final class Recorder {
         phase = .stopping(since: since)
         timer?.invalidate()
         let hadSystemAudio = await session.finish()
+        systemSignalDetected = hadSystemAudio
+        microphoneSignalDetected = session.microphoneSignalDetected
         if hadSystemAudio { settings.store.set(true, forKey: "systemAudioConfirmed") }
         if ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) < Self.minimumAudioFileBytes {
             try? FileManager.default.removeItem(at: url)
@@ -127,7 +148,7 @@ final class Recorder {
             ?? fallbackFrom.map { Notice.fellBack(folder: $0) }
             ?? (!hadSystemAudio && elapsed >= 60 ? .noSystemAudio : nil)
         finishCleanup()
-        AccessibilityNotification.Announcement(reason.map { Notice.stopped($0).text } ?? "Recording saved").post()
+        AccessibilityNotification.Announcement(reason.map { Notice.stopped($0).text } ?? "录音已结束").post()
     }
 
     func recoverInterruptedRecording() async {
@@ -202,6 +223,10 @@ final class Recorder {
     private func tick(since: Date) {
         guard case .recording = phase else { return }
         elapsed = Int(Date.now.timeIntervalSince(since))
+        if let session {
+            systemSignalDetected = session.systemSignalDetected
+            microphoneSignalDetected = session.microphoneSignalDetected
+        }
         guard Date.now.timeIntervalSince(lastDiskCheck) >= 30, let folder = recordingURL?.deletingLastPathComponent() else { return }
         lastDiskCheck = .now
         guard FileManager.default.fileExists(atPath: folder.path), let space = Self.freeSpace(at: folder) else {
