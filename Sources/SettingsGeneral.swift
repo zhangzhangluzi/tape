@@ -15,7 +15,7 @@ struct GeneralSettings: View {
                 HStack {
                     Button(recorder.actionTitle, action: toggleRecording)
                         .buttonStyle(.borderedProminent)
-                        .disabled(recorder.phase != .idle && !recorder.isRecording)
+                        .disabled(!recorder.canToggleRecording)
                     if recorder.startedAt != nil {
                         Text(ElapsedTime.clock(recorder.elapsed)).monospacedDigit()
                     }
@@ -36,6 +36,27 @@ struct GeneralSettings: View {
                 if recorder.phase == .idle, let recording = recorder.lastRecording {
                     Button("打开最近录音") { NSWorkspace.shared.open(recording) }
                 }
+            }
+
+            Section {
+                LabeledContent("麦克风权限", value: recorder.microphonePermission.text)
+                LabeledContent("系统录音", value: recorder.systemAudioStatus.text)
+                if case .failed(let message) = recorder.systemAudioStatus {
+                    Text(message).font(.callout).foregroundStyle(.orange)
+                }
+                HStack {
+                    Button(recorder.isCheckingPermissions ? "检测中…" : "检测权限") {
+                        Task { await recorder.checkPermissions() }
+                    }
+                    .disabled(recorder.phase != .idle || recorder.isCheckingPermissions)
+                    Spacer()
+                    Button("麦克风设置") { NSWorkspace.shared.open(PrivacyPane.microphone.url) }
+                    Button("系统录音设置") { NSWorkspace.shared.open(PrivacyPane.systemAudio.url) }
+                }
+            } header: {
+                Text("录音权限")
+            } footer: {
+                Text("检测会播放短测试音。未收到声音时，系统录音仍待验证。")
             }
 
             Section {

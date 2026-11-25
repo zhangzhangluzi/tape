@@ -36,7 +36,7 @@ struct RecordRow: View {
     }
 
     private var isEnabled: Bool {
-        recorder.startedAt == nil ? recorder.phase == .idle : recorder.isRecording
+        recorder.canToggleRecording
     }
 
 }

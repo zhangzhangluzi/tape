@@ -13,9 +13,11 @@ enum CaptureEvent: Sendable, Equatable {
 
 struct CaptureError: LocalizedError {
     let errorDescription: String?
+    let isPermissionDenied: Bool
 
     init(_ message: String, status: OSStatus = noErr) {
         errorDescription = status == noErr ? message : "\(message) (\(status))"
+        isPermissionDenied = status == kAudioDevicePermissionsError
     }
 }
 
@@ -24,17 +26,17 @@ final class CaptureSession: @unchecked Sendable {
     private static let outputRate = 48000.0
     private static let rebuildAttemptsWithMicrophone = 3
     private static let firstAudioTimeout = 5.0
+    private static let systemSignalWindow: UInt64 = 8_000_000_000
 
     private let controlQueue = DispatchQueue(label: "dev.gustaf.tape.control")
     private let processingQueue = DispatchQueue(label: "dev.gustaf.tape.processing", qos: .userInitiated)
-    private let ring = AudioRing(slots: 256, framesPerSlot: 2 * 8192)
+    private let ring: AudioRing?
     private let deviceRate = Atomic<UInt64>(0)
-    private let heardSystemAudio = Atomic<Bool>(false)
+    private let lastSystemSignal = Atomic<UInt64>(0)
+    private let deniedSystemAudio = Atomic<Bool>(false)
     private let heardMicrophone = Atomic<Bool>(false)
-    private let writer: AVAssetWriter
-    private let input: AVAssetWriterInput
+    private let output: (writer: AVAssetWriter, input: AVAssetWriterInput)?
     private let outputFormat: AVAudioFormat
-    private let probesTap: Bool
     private let makeEchoCanceller: (@Sendable (Double) -> EchoCanceller)?
     private let onEvent: @Sendable (CaptureEvent) -> Void
 
@@ -45,7 +47,6 @@ final class CaptureSession: @unchecked Sendable {
     private var defaultDeviceListeners: [(AudioObjectPropertySelector, AudioObjectPropertyListenerBlock)] = []
     private var rebuildRequest = 0
     private var isStopping = false
-    private var didReportDenial = false
 
     private let resampler: Resampler
     private var echoCanceller: EchoCanceller?
@@ -56,27 +57,39 @@ final class CaptureSession: @unchecked Sendable {
     private var drainTimer: DispatchSourceTimer?
     private let silence = [Float](repeating: 0, count: 4096)
 
-    var systemSignalDetected: Bool { heardSystemAudio.load(ordering: .relaxed) }
+    var systemSignalDetected: Bool { lastSystemSignal.load(ordering: .relaxed) != 0 }
+    var hasRecentSystemAudio: Bool {
+        let last = lastSystemSignal.load(ordering: .relaxed)
+        let now = DispatchTime.now().uptimeNanoseconds
+        return last != 0 && now >= last && now - last < Self.systemSignalWindow
+    }
+    var systemPermissionDenied: Bool { deniedSystemAudio.load(ordering: .relaxed) }
     var microphoneSignalDetected: Bool { heardMicrophone.load(ordering: .relaxed) }
 
-    init(url: URL, probesTap: Bool, makeEchoCanceller: (@Sendable (Double) -> EchoCanceller)?, onEvent: @escaping @Sendable (CaptureEvent) -> Void) throws {
-        writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
-        writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
-        writer.initialMovieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
-        input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: Self.outputRate,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 64000,
-        ])
-        input.expectsMediaDataInRealTime = true
-        writer.add(input)
+    init(url: URL?, makeEchoCanceller: (@Sendable (Double) -> EchoCanceller)?, onEvent: @escaping @Sendable (CaptureEvent) -> Void) throws {
+        if let url {
+            let writer = try AVAssetWriter(outputURL: url, fileType: .m4a)
+            writer.movieFragmentInterval = CMTime(seconds: 10, preferredTimescale: 600)
+            writer.initialMovieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
+            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: Self.outputRate,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderBitRateKey: 64000,
+            ])
+            input.expectsMediaDataInRealTime = true
+            writer.add(input)
+            output = (writer, input)
+            ring = AudioRing(slots: 256, framesPerSlot: 2 * 8192)
+        } else {
+            output = nil
+            ring = nil
+        }
         guard let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: Self.outputRate, channels: 1, interleaved: false) else {
             throw CaptureError("无法设置录音输出格式。")
         }
         self.outputFormat = outputFormat
         resampler = Resampler(outputFormat: outputFormat)
-        self.probesTap = probesTap
         self.makeEchoCanceller = makeEchoCanceller
         self.onEvent = onEvent
     }
@@ -85,16 +98,21 @@ final class CaptureSession: @unchecked Sendable {
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
             controlQueue.async { [self] in
                 do {
-                    guard writer.startWriting() else { throw writer.error ?? CaptureError("无法创建录音文件。") }
-                    writer.startSession(atSourceTime: .zero)
-                    processingQueue.sync { startDraining() }
+                    if let output {
+                        guard output.writer.startWriting() else { throw output.writer.error ?? CaptureError("无法创建录音文件。") }
+                        output.writer.startSession(atSourceTime: .zero)
+                        processingQueue.sync { startDraining() }
+                    }
                     tap = try Self.makeTap()
-                    try startAggregate(includeMicrophone: true)
-                    listenForDefaultDevices()
-                    if probesTap { scheduleProbes() }
-                    processingQueue.asyncAfter(deadline: .now() + Self.firstAudioTimeout) { [weak self] in
-                        guard let self, !isFinished, framesWritten == 0 else { return }
-                        onEvent(.deviceFailed)
+                    try startAggregate(includeMicrophone: output != nil)
+                    scheduleProbe(after: 3, repeatWhileRecording: output != nil)
+                    if output != nil {
+                        listenForDefaultDevices()
+                        controlQueue.asyncAfter(deadline: .now() + 8) { [weak self] in self?.probeSystemAudioPermission() }
+                        processingQueue.asyncAfter(deadline: .now() + Self.firstAudioTimeout) { [weak self] in
+                            guard let self, !isFinished, framesWritten == 0 else { return }
+                            onEvent(.deviceFailed)
+                        }
                     }
                     done.resume()
                 } catch {
@@ -119,6 +137,7 @@ final class CaptureSession: @unchecked Sendable {
                 done.resume()
             }
         }
+        guard output != nil else { return systemSignalDetected }
         await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
             processingQueue.async { [self] in
                 drainTimer?.cancel()
@@ -127,12 +146,16 @@ final class CaptureSession: @unchecked Sendable {
                 if let echoCanceller { append(resampler.convert(echoCanceller.flush(), rate: echoCanceller.sampleRate)) }
                 append(resampler.flush())
                 isFinished = true
-                if writer.status == .writing { input.markAsFinished() }
+                if let output, output.writer.status == .writing { output.input.markAsFinished() }
                 done.resume()
             }
         }
-        if writer.status == .writing { await writer.finishWriting() }
-        return heardSystemAudio.load(ordering: .relaxed)
+        if let output, output.writer.status == .writing { await output.writer.finishWriting() }
+        return systemSignalDetected
+    }
+
+    func recheckSystemAudioPermission() {
+        controlQueue.async { [weak self] in self?.probeSystemAudioPermission() }
     }
 
     // MARK: Devices (controlQueue)
@@ -167,11 +190,13 @@ final class CaptureSession: @unchecked Sendable {
         let streamCount = Self.inputStreamCount(of: aggregate)
         guard streamCount > tapIndex else { throw CaptureError("当前音频设备未提供系统声音。") }
 
-        for object in [aggregate, clockID] {
-            let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.sampleRateChanged(on: object) }
-            var address = Self.address(kAudioDevicePropertyNominalSampleRate)
-            AudioObjectAddPropertyListenerBlock(object, &address, controlQueue, listener)
-            rateListeners.append((object, listener))
+        if output != nil {
+            for object in [aggregate, clockID] {
+                let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.sampleRateChanged(on: object) }
+                var address = Self.address(kAudioDevicePropertyNominalSampleRate)
+                AudioObjectAddPropertyListenerBlock(object, &address, controlQueue, listener)
+                rateListeners.append((object, listener))
+            }
         }
 
         var proc: AudioDeviceIOProcID?
@@ -231,6 +256,10 @@ final class CaptureSession: @unchecked Sendable {
             return
         } catch {
             stopAggregate()
+            if let error = error as? CaptureError, error.isPermissionDenied {
+                reportSystemAudioDenial()
+                return
+            }
         }
         guard attempt < Self.rebuildAttemptsWithMicrophone else {
             onEvent(.deviceFailed)
@@ -239,21 +268,29 @@ final class CaptureSession: @unchecked Sendable {
         controlQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.rebuild(request: request, attempt: attempt + 1) }
     }
 
-    private func scheduleProbes() {
-        for delay in [3.0, 8.0] {
-            controlQueue.asyncAfter(deadline: .now() + delay) { [weak self] in self?.probeSystemAudioPermission() }
+    private func scheduleProbe(after delay: TimeInterval, repeatWhileRecording: Bool) {
+        controlQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !isStopping, !systemPermissionDenied else { return }
+            probeSystemAudioPermission()
+            if repeatWhileRecording { scheduleProbe(after: 30, repeatWhileRecording: true) }
         }
     }
 
-    // Undocumented (spike 2): rewriting a tap's description reportedly fails with kAudioDevicePermissionsError once system audio access is denied.
+    // Core Audio does not expose a permission preflight for taps. Treat an explicit
+    // permission error as denial, but require actual captured audio to confirm access.
     private func probeSystemAudioPermission() {
-        guard !isStopping, !didReportDenial, let tap, !heardSystemAudio.load(ordering: .relaxed) else { return }
+        guard !isStopping, !systemPermissionDenied, !hasRecentSystemAudio, let tap else { return }
         var address = Self.address(kAudioTapPropertyDescription)
         let status = withUnsafePointer(to: tap.description) {
             AudioObjectSetPropertyData(tap.id, &address, 0, nil, UInt32(MemoryLayout<CATapDescription>.size), $0)
         }
         guard status == kAudioDevicePermissionsError else { return }
-        didReportDenial = true
+        reportSystemAudioDenial()
+    }
+
+    private func reportSystemAudioDenial() {
+        guard !systemPermissionDenied else { return }
+        deniedSystemAudio.store(true, ordering: .relaxed)
         onEvent(.systemAudioDenied)
     }
 
@@ -261,6 +298,13 @@ final class CaptureSession: @unchecked Sendable {
 
     private func capture(_ data: UnsafePointer<AudioBufferList>, at time: AudioTimeStamp, tapIndex: Int) {
         let buffers = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: data))
+        if buffers.indices.contains(tapIndex), let raw = buffers[tapIndex].mData {
+            let samples = UnsafeBufferPointer(start: raw.assumingMemoryBound(to: Float.self), count: Int(buffers[tapIndex].mDataByteSize) / MemoryLayout<Float>.size)
+            if samples.contains(where: { abs($0) > 0.0001 }) {
+                lastSystemSignal.store(DispatchTime.now().uptimeNanoseconds, ordering: .relaxed)
+            }
+        }
+        guard let ring else { return }
         guard let first = buffers.first(where: { $0.mData != nil && $0.mNumberChannels > 0 }) else { return }
         let available = Int(first.mDataByteSize) / MemoryLayout<Float>.size / Int(first.mNumberChannels)
         let hostSeconds = Double(AudioConvertHostTimeToNanos(time.mHostTime)) / 1e9
@@ -277,9 +321,6 @@ final class CaptureSession: @unchecked Sendable {
                     samples: UnsafeBufferPointer(start: raw.assumingMemoryBound(to: Float.self), count: Int(buffer.mDataByteSize) / MemoryLayout<Float>.size),
                     channels: Int(buffer.mNumberChannels)
                 )
-                if index == tapIndex, !heardSystemAudio.load(ordering: .relaxed), stream.samples.contains(where: { $0 != 0 }) {
-                    heardSystemAudio.store(true, ordering: .relaxed)
-                }
                 Mixer.addLoudestChannel(of: stream, into: index < tapIndex ? microphone : system)
             }
             return 2 * frames
@@ -297,6 +338,7 @@ final class CaptureSession: @unchecked Sendable {
     }
 
     private func drain() {
+        guard let ring else { return }
         while !isFinished, ring.read({ chunk, samples in consume(chunk, samples) }) {}
     }
 
@@ -332,8 +374,8 @@ final class CaptureSession: @unchecked Sendable {
     }
 
     private func append(_ samples: [Float]) {
-        guard !samples.isEmpty else { return }
-        guard writer.status == .writing else {
+        guard let output, !samples.isEmpty else { return }
+        guard output.writer.status == .writing else {
             failWriting()
             return
         }
@@ -342,7 +384,7 @@ final class CaptureSession: @unchecked Sendable {
         let byteCount = samples.count * MemoryLayout<Float>.size
         let timestamp = CMTime(value: framesWritten, timescale: CMTimeScale(Self.outputRate))
         framesWritten += Int64(samples.count)
-        guard input.isReadyForMoreMediaData else { return }
+        guard output.input.isReadyForMoreMediaData else { return }
         var block: CMBlockBuffer?
         var sample: CMSampleBuffer?
         guard CMBlockBufferCreateWithMemoryBlock(allocator: nil, memoryBlock: nil, blockLength: byteCount, blockAllocator: nil, customBlockSource: nil, offsetToData: 0, dataLength: byteCount, flags: 0, blockBufferOut: &block) == noErr,
@@ -351,7 +393,7 @@ final class CaptureSession: @unchecked Sendable {
               CMAudioSampleBufferCreateReadyWithPacketDescriptions(allocator: nil, dataBuffer: block, formatDescription: outputFormat.formatDescription, sampleCount: samples.count, presentationTimeStamp: timestamp, packetDescriptions: nil, sampleBufferOut: &sample) == noErr,
               let sample
         else { return }
-        if !input.append(sample) { failWriting() }
+        if !output.input.append(sample) { failWriting() }
     }
 
     private func failWriting() {

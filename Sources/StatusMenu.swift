@@ -122,7 +122,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         item.title = recorder.actionTitle
         item.target = self
         item.action = #selector(toggleRecording)
-        item.isEnabled = recorder.startedAt == nil ? recorder.phase == .idle : recorder.isRecording
+        item.isEnabled = recorder.canToggleRecording
         return item
     }
 

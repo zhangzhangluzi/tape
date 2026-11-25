@@ -1,6 +1,6 @@
 import Foundation
 
-public enum PrivacyPane: Sendable {
+public enum PrivacyPane: Sendable, Equatable {
     case microphone, systemAudio
 
     public var url: URL {
@@ -15,6 +15,7 @@ public enum StopReason: Sendable, Equatable {
     case volumeDisconnected(volume: String)
     case writeFailed
     case audioFailed
+    case permissionLost(PrivacyPane)
 }
 
 public enum Notice: Sendable, Equatable {
@@ -37,6 +38,8 @@ public enum Notice: Sendable, Equatable {
         case .stopped(.volumeDisconnected(let volume)): "“\(volume)”连接已断开，录音已停止。"
         case .stopped(.writeFailed): "无法写入录音文件，录音已停止。"
         case .stopped(.audioFailed): "音频设备失去响应，录音已停止。"
+        case .stopped(.permissionLost(.microphone)): "麦克风权限失效，录音已停止。"
+        case .stopped(.permissionLost(.systemAudio)): "系统录音权限失效，录音已停止。"
         case .fellBack(let folder): "“\(folder)”不可用，录音已保存到“影片／Tape 中文版”。"
         case .noSystemAudio: "上一段录音未检测到系统声音。"
         case .notEnoughSpace(let volume): "“\(volume)”可用空间不足，无法开始录音。"
@@ -45,6 +48,7 @@ public enum Notice: Sendable, Equatable {
     }
 
     public var privacyPane: PrivacyPane? {
+        if case .stopped(.permissionLost(let pane)) = self { return pane }
         if self == .microphoneDenied { return .microphone }
         if self == .systemAudioDenied || self == .noSystemAudio { return .systemAudio }
         return nil

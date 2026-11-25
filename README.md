@@ -15,6 +15,8 @@ open "/Applications/Tape 中文版.app"
 
 首次录制时，按 macOS 提示允许麦克风和仅系统录音。默认录音文件夹是 `~/Movies/Tape 中文版`。
 
+在「通用 → 录音权限」可以检查麦克风授权，并用短测试音验证系统录音。macOS 管理授权，使用本地临时签名重新构建后可能需要授权。已有代码签名证书时，可通过 `CODE_SIGN_IDENTITY` 为各版本使用同一签名身份。
+
 原作者为 Gustaf Eriksson，项目采用 [MIT 许可证](LICENSE)。
 
 <details>

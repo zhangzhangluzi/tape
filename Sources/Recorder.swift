@@ -22,6 +22,9 @@ final class Recorder {
     private(set) var microphoneName: String?
     private(set) var systemSignalDetected = false
     private(set) var microphoneSignalDetected = false
+    private(set) var microphonePermission = MicrophonePermission.current
+    private(set) var systemAudioStatus = SystemAudioStatus.unchecked
+    private(set) var isCheckingPermissions = false
     private(set) var isSavingToFallback = false
     private(set) var lastRecording: URL? {
         didSet { settings.store.set(lastRecording?.path, forKey: "lastRecording") }
@@ -49,12 +52,17 @@ final class Recorder {
     }
 
     var actionTitle: String {
-        switch phase {
+        if isCheckingPermissions { return "正在检测权限…" }
+        return switch phase {
         case .idle: "开始录音"
         case .starting: "正在准备…"
         case .recording: "停止录音"
         case .stopping: "正在保存…"
         }
+    }
+
+    var canToggleRecording: Bool {
+        !isCheckingPermissions && (phase == .idle || isRecording)
     }
 
     var startedAt: Date? {
@@ -69,17 +77,12 @@ final class Recorder {
     }
 
     func start() async {
-        guard phase == .idle else { return }
-        let microphoneAccess = AVCaptureDevice.authorizationStatus(for: .audio)
-        if microphoneAccess == .denied || microphoneAccess == .restricted {
-            notice = .microphoneDenied
-            NSWorkspace.shared.open(PrivacyPane.microphone.url)
-            return
-        }
+        guard phase == .idle, !isCheckingPermissions else { return }
         phase = .starting
+        systemAudioStatus = .unchecked
         systemSignalDetected = false
         microphoneSignalDetected = false
-        if microphoneAccess == .notDetermined, !(await AVCaptureDevice.requestAccess(for: .audio)) {
+        if !(await authorizeMicrophoneIfNeeded()) {
             notice = .microphoneDenied
             phase = .idle
             return
@@ -97,8 +100,9 @@ final class Recorder {
         sessionID = id
         let session: CaptureSession
         var pendingSession: CaptureSession?
+        systemAudioStatus = .waitingForSignal
         do {
-            let candidate = try CaptureSession(url: url, probesTap: settings.store.bool(forKey: "systemAudioConfirmed"), makeEchoCanceller: settings.reducesEcho ? EchoCanceller.init : nil) { [weak self] event in
+            let candidate = try CaptureSession(url: url, makeEchoCanceller: settings.reducesEcho ? EchoCanceller.init : nil) { [weak self] event in
                 Task { @MainActor in self?.handle(event, from: id) }
             }
             pendingSession = candidate
@@ -109,7 +113,17 @@ final class Recorder {
             _ = await pendingSession?.finish()
             try? FileManager.default.removeItem(at: url)
             settings.store.removeObject(forKey: "inProgressRecording")
-            notice = .couldNotStart(message: error.localizedDescription)
+            refreshPermissions()
+            if microphonePermission != .authorized {
+                notice = .microphoneDenied
+                systemAudioStatus = .unchecked
+            } else if (error as? CaptureError)?.isPermissionDenied == true {
+                notice = .systemAudioDenied
+                systemAudioStatus = .denied
+            } else {
+                notice = .couldNotStart(message: error.localizedDescription)
+                systemAudioStatus = .unchecked
+            }
             phase = .idle
             return
         }
@@ -138,7 +152,8 @@ final class Recorder {
         let hadSystemAudio = await session.finish()
         systemSignalDetected = hadSystemAudio
         microphoneSignalDetected = session.microphoneSignalDetected
-        if hadSystemAudio { settings.store.set(true, forKey: "systemAudioConfirmed") }
+        if session.systemPermissionDenied { systemAudioStatus = .denied }
+        else { systemAudioStatus = hadSystemAudio ? .detected : .noSignal }
         if ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) < Self.minimumAudioFileBytes {
             try? FileManager.default.removeItem(at: url)
         } else {
@@ -148,6 +163,9 @@ final class Recorder {
             ?? fallbackFrom.map { Notice.fellBack(folder: $0) }
             ?? (!hadSystemAudio && elapsed >= 60 ? .noSystemAudio : nil)
         finishCleanup()
+        if case .permissionLost? = reason {
+            NSApp.requestUserAttention(.criticalRequest)
+        }
         AccessibilityNotification.Announcement(reason.map { Notice.stopped($0).text } ?? "录音已结束").post()
     }
 
@@ -173,9 +191,39 @@ final class Recorder {
         notice = .recovered(name: RecordingFile.displayName(of: url))
     }
 
-    func refreshPermissions() {
-        guard notice == .microphoneDenied, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
-        notice = nil
+    func checkPermissions() async {
+        guard phase == .idle, !isCheckingPermissions else { return }
+        isCheckingPermissions = true
+        defer { isCheckingPermissions = false }
+        _ = await authorizeMicrophoneIfNeeded()
+        if microphonePermission == .authorized, notice == .microphoneDenied { notice = nil }
+        systemAudioStatus = .checking
+        systemAudioStatus = await SystemAudioPermissionCheck.run()
+        refreshPermissions()
+        if case .detected = systemAudioStatus, notice == .systemAudioDenied { notice = nil }
+    }
+
+    func refreshPermissions(recheckSystemAudio: Bool = false) {
+        microphonePermission = .current
+        if microphonePermission == .authorized, notice == .microphoneDenied { notice = nil }
+        if isRecording, microphonePermission != .authorized {
+            Task { await stop(reason: .permissionLost(.microphone)) }
+        }
+        guard recheckSystemAudio else { return }
+        if let session, isRecording {
+            session.recheckSystemAudioPermission()
+        } else if phase == .idle, !isCheckingPermissions {
+            systemAudioStatus = .unchecked
+        }
+    }
+
+    private func authorizeMicrophoneIfNeeded() async -> Bool {
+        microphonePermission = .current
+        if microphonePermission == .notDetermined {
+            _ = await AVCaptureDevice.requestAccess(for: .audio)
+            microphonePermission = .current
+        }
+        return microphonePermission == .authorized
     }
 
     #if DEBUG
@@ -194,16 +242,12 @@ final class Recorder {
             return
         }
         if event == .systemAudioDenied {
-            Task { await stopForDeniedSystemAudio() }
+            systemAudioStatus = .denied
+            let pane: PrivacyPane = MicrophonePermission.current == .authorized ? .systemAudio : .microphone
+            Task { await stop(reason: .permissionLost(pane)) }
             return
         }
         Task { await stop(reason: event == .deviceFailed ? .audioFailed : failureReason()) }
-    }
-
-    private func stopForDeniedSystemAudio() async {
-        guard recordingURL != nil else { return }
-        await stop()
-        notice = .systemAudioDenied
     }
 
     private func finishCleanup() {
@@ -222,10 +266,15 @@ final class Recorder {
 
     private func tick(since: Date) {
         guard case .recording = phase else { return }
+        refreshPermissions()
+        guard microphonePermission == .authorized else { return }
         elapsed = Int(Date.now.timeIntervalSince(since))
         if let session {
             systemSignalDetected = session.systemSignalDetected
             microphoneSignalDetected = session.microphoneSignalDetected
+            if !session.systemPermissionDenied {
+                systemAudioStatus = session.hasRecentSystemAudio ? .detected : .waitingForSignal
+            }
         }
         guard Date.now.timeIntervalSince(lastDiskCheck) >= 30, let folder = recordingURL?.deletingLastPathComponent() else { return }
         lastDiskCheck = .now

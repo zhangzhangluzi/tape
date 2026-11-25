@@ -4,6 +4,7 @@ cd "$(dirname "$0")"
 
 app_name="Tape 中文版.app"
 bundle_id=local.codex.tape-zh-cn
+signing_identity=${CODE_SIGN_IDENTITY:--}
 destination="$PWD/dist"
 if [[ $# -eq 1 && "$1" == --install ]]; then
     destination=/Applications
@@ -34,10 +35,10 @@ info="$bundle/Contents/Info.plist"
 /usr/bin/plutil -replace CFBundleIdentifier -string "$bundle_id" "$info"
 /usr/bin/plutil -replace CFBundleName -string 'Tape 中文版' "$info"
 /usr/bin/plutil -replace CFBundleShortVersionString -string 0.5.0 "$info"
-/usr/bin/plutil -replace CFBundleVersion -string 501 "$info"
+/usr/bin/plutil -replace CFBundleVersion -string 502 "$info"
 /usr/bin/plutil -replace NSHumanReadableCopyright -string 'Copyright © 2026 Gustaf Eriksson' "$info"
 /usr/bin/plutil -insert CFBundleIconFile -string AppIcon "$info"
-/usr/bin/codesign --sign - --options runtime --entitlements Resources/Tape.entitlements "$bundle"
+/usr/bin/codesign --sign "$signing_identity" --options runtime --entitlements Resources/Tape.entitlements "$bundle"
 /usr/bin/codesign --verify --strict "$bundle"
 
 if [[ -e "$target" || -L "$target" ]]; then

@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in await recorder.stop(reason: .sleep) }
             },
             NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [recorder] _ in
-                MainActor.assumeIsolated { recorder.refreshPermissions() }
+                MainActor.assumeIsolated { recorder.refreshPermissions(recheckSystemAudio: true) }
             },
             NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [recorder] _ in
                 MainActor.assumeIsolated { recorder.refreshPermissions() }

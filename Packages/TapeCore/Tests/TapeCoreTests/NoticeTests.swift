@@ -7,6 +7,8 @@ struct NoticeTests {
         #expect(Notice.systemAudioDenied.privacyPane == .systemAudio)
         #expect(Notice.noSystemAudio.privacyPane == .systemAudio)
         #expect(Notice.stopped(.sleep).privacyPane == nil)
+        #expect(Notice.stopped(.permissionLost(.microphone)).privacyPane == .microphone)
+        #expect(Notice.stopped(.permissionLost(.systemAudio)).privacyPane == .systemAudio)
     }
 
     @Test func stopReasonsNameTheVolume() {
