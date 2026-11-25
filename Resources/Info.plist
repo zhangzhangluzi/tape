@@ -23,7 +23,7 @@
 	<key>LSMinimumSystemVersion</key>
 	<string>26.0</string>
 	<key>LSUIElement</key>
-	<true/>
+	<false/>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>Tape 中文版需要系统录音权限，才能把 Mac 播放的声音录进本机文件。</string>
 	<key>NSHumanReadableCopyright</key>

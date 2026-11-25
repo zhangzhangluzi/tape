@@ -2,14 +2,16 @@
 
 基于 [Tape v0.5.0](https://github.com/gustaferiksson/tape/releases/tag/v0.5.0) 的简体中文版。可以在窗口里开始和停止录音，查看系统声音和麦克风是否有信号。两路声音合成一份 M4A，约 30 MB/小时。
 
-## 在 Mac 上构建
+## 在 Mac 上构建和安装
 
 需要 macOS 26 或更新版本，以及带 Swift 6.2 或更新版本的 Xcode。克隆本仓库后，在仓库目录运行以下命令。
 
 ```sh
-./build-zh.sh
-open "dist/Tape 中文版.app"
+./build-zh.sh --install
+open "/Applications/Tape 中文版.app"
 ```
+
+安装后可以在访达的「应用程序」中找到 Tape 中文版。
 
 首次录制时，按 macOS 提示允许麦克风和仅系统录音。默认录音文件夹是 `~/Movies/Tape 中文版`。
 

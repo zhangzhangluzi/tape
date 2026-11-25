@@ -47,7 +47,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSMinimumSystemVersion: "26.0"
-        LSUIElement: true
+        LSUIElement: false
         NSHumanReadableCopyright: "Tape"
         # Written here rather than as INFOPLIST_KEY_*: NSAudioCaptureUsageDescription is reported to be dropped that way.
         NSMicrophoneUsageDescription: "Tape 中文版需要麦克风权限，才能把你说话的声音录进本机文件。"
