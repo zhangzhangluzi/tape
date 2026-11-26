@@ -7,11 +7,13 @@
 需要 macOS 26 或更新版本，以及带 Swift 6.2 或更新版本的 Xcode。克隆本仓库后，在仓库目录运行以下命令。
 
 ```sh
-./build-zh.sh --install
+./build-zh.sh
 open "/Applications/Tape 中文版.app"
 ```
 
 安装后可以在访达的「应用程序」中找到 Tape 中文版。
+
+更新前从顶部菜单栏退出 Tape，再运行 `./build-zh.sh`。脚本会直接覆盖「应用程序」里的 Tape 中文版，并把旧版存为 `.build` 下的 ZIP 备份。需要分发包时可运行 `./build-zh.sh --package`，生成 `dist/Tape 中文版.zip`。
 
 点最后一个窗口的红色 × 后，Tape 会隐藏程序坞图标并留在顶部菜单栏。点击波形图标中的「Tape 设置…」可重新打开窗口。
 
